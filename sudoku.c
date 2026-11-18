@@ -10,18 +10,7 @@
 #define BRANCO 15
 #define PADRAO 7
 
-int solucao[TAM][TAM] = {
-    {5,3,4,6,7,8,9,1,2},
-    {6,7,2,1,9,5,3,4,8},
-    {1,9,8,3,4,2,5,6,7},
-    {8,5,9,7,6,1,4,2,3},
-    {4,2,6,8,5,3,7,9,1},
-    {7,1,3,9,2,4,8,5,6},
-    {9,6,1,5,3,7,2,8,4},
-    {2,8,7,4,1,9,6,3,5},
-    {3,4,5,2,8,6,1,7,9}
-};
-
+int solucao[TAM][TAM];
 int tabuleiro[TAM][TAM];
 int fixo[TAM][TAM];
 
@@ -29,26 +18,190 @@ int erros = 0;
 int dicas = 0;
 
 // =================================
-// CONTROLE DE CORES
+// CORES
 // =================================
 
 void cor(int codigo) {
     SetConsoleTextAttribute(
-        GetStdHandle(STD_OUTPUT_HANDLE),
-        codigo
+        GetStdHandle(STD_OUTPUT_HANDLE), codigo
     );
 }
-
-// =================================
-// LIMPAR TELA
-// =================================
 
 void limparTela(void) {
     system("cls");
 }
 
 // =================================
-// PREPARAR JOGO
+// EMBARALHAR NUMEROS
+// =================================
+
+void embaralhar(int v[], int tamanho) {
+    for (int i = tamanho - 1; i > 0; i--) {
+        int j = rand() % (i + 1);
+
+        int temp = v[i];
+        v[i] = v[j];
+        v[j] = temp;
+    }
+}
+
+// =================================
+// VERIFICAR JOGADA
+// =================================
+
+int movimentoValido(int grade[9][9],
+                    int linha, int coluna, int numero) {
+
+    for (int j = 0; j < 9; j++) {
+        if (grade[linha][j] == numero)
+            return 0;
+    }
+
+    for (int i = 0; i < 9; i++) {
+        if (grade[i][coluna] == numero)
+            return 0;
+    }
+
+    int inicioLinha = (linha / 3) * 3;
+    int inicioColuna = (coluna / 3) * 3;
+
+    for (int i = inicioLinha; i < inicioLinha + 3; i++) {
+        for (int j = inicioColuna; j < inicioColuna + 3; j++) {
+            if (grade[i][j] == numero)
+                return 0;
+        }
+    }
+
+    return 1;
+}
+
+// =================================
+// ENCONTRAR MELHOR CASA VAZIA
+// =================================
+
+int encontrarCasa(int grade[9][9],
+                  int *linha, int *coluna,
+                  int aleatorio) {
+
+    int menor = 10;
+    int candidatos[9];
+
+    *linha = -1;
+    *coluna = -1;
+
+    for (int i = 0; i < 9; i++) {
+        for (int j = 0; j < 9; j++) {
+
+            if (grade[i][j] != 0)
+                continue;
+
+            int quantidade = 0;
+
+            for (int n = 1; n <= 9; n++) {
+                if (movimentoValido(grade, i, j, n))
+                    candidatos[quantidade++] = n;
+            }
+
+            if (quantidade < menor) {
+                menor = quantidade;
+                *linha = i;
+                *coluna = j;
+
+                if (menor == 0)
+                    return 0;
+            }
+        }
+    }
+
+    if (*linha == -1)
+        return 1;
+
+    return 2;
+}
+
+// =================================
+// GERAR SOLUCAO ALEATORIA
+// =================================
+
+int gerarSolucao(int grade[9][9]) {
+
+    int linha, coluna;
+
+    int estado = encontrarCasa(
+        grade, &linha, &coluna, 1
+    );
+
+    if (estado == 1)
+        return 1;
+
+    if (estado == 0)
+        return 0;
+
+    int numeros[9];
+
+    for (int i = 0; i < 9; i++)
+        numeros[i] = i + 1;
+
+    embaralhar(numeros, 9);
+
+    for (int i = 0; i < 9; i++) {
+
+        int n = numeros[i];
+
+        if (movimentoValido(grade, linha, coluna, n)) {
+
+            grade[linha][coluna] = n;
+
+            if (gerarSolucao(grade))
+                return 1;
+
+            grade[linha][coluna] = 0;
+        }
+    }
+
+    return 0;
+}
+
+// =================================
+// CONTAR SOLUCOES POSSIVEIS
+// =================================
+
+int contarSolucoes(int grade[9][9]) {
+
+    int linha, coluna;
+
+    int estado = encontrarCasa(
+        grade, &linha, &coluna, 0
+    );
+
+    if (estado == 1)
+        return 1;
+
+    if (estado == 0)
+        return 0;
+
+    int total = 0;
+
+    for (int n = 1; n <= 9; n++) {
+
+        if (movimentoValido(grade, linha, coluna, n)) {
+
+            grade[linha][coluna] = n;
+
+            total += contarSolucoes(grade);
+
+            grade[linha][coluna] = 0;
+
+            if (total >= 2)
+                return 2;
+        }
+    }
+
+    return total;
+}
+
+// =================================
+// GERAR NOVO SUDOKU
 // =================================
 
 void prepararJogo(int dificuldade) {
@@ -58,32 +211,62 @@ void prepararJogo(int dificuldade) {
     if (dificuldade == 1)
         vazios = 35;
     else if (dificuldade == 2)
-        vazios = 48;
+        vazios = 45;
     else
-        vazios = 58;
+        vazios = 52;
 
-    for (int i = 0; i < TAM; i++) {
-        for (int j = 0; j < TAM; j++) {
+    // Comeca com um tabuleiro vazio
+
+    for (int i = 0; i < 9; i++)
+        for (int j = 0; j < 9; j++)
+            solucao[i][j] = 0;
+
+    // Cria uma solucao completamente aleatoria
+
+    gerarSolucao(solucao);
+
+    // Copia a solucao para o tabuleiro
+
+    for (int i = 0; i < 9; i++) {
+        for (int j = 0; j < 9; j++) {
 
             tabuleiro[i][j] = solucao[i][j];
             fixo[i][j] = 1;
-
         }
     }
 
+    // Embaralha as posicoes que serao removidas
+
+    int posicoes[81];
+
+    for (int i = 0; i < 81; i++)
+        posicoes[i] = i;
+
+    embaralhar(posicoes, 81);
+
     int removidos = 0;
 
-    while (removidos < vazios) {
+    for (int k = 0; k < 81 && removidos < vazios; k++) {
 
-        int i = rand() % 9;
-        int j = rand() % 9;
+        int linha = posicoes[k] / 9;
+        int coluna = posicoes[k] % 9;
 
-        if (tabuleiro[i][j] != 0) {
+        int numero = tabuleiro[linha][coluna];
 
-            tabuleiro[i][j] = 0;
-            fixo[i][j] = 0;
+        tabuleiro[linha][coluna] = 0;
 
+        // Confere se existe somente uma solucao
+
+        int total = contarSolucoes(tabuleiro);
+
+        if (total == 1) {
+
+            fixo[linha][coluna] = 0;
             removidos++;
+
+        } else {
+
+            tabuleiro[linha][coluna] = numero;
         }
     }
 }
@@ -105,19 +288,18 @@ void exibirTabuleiro(void) {
     printf("       1 2 3   4 5 6   7 8 9\n");
     printf("     +-------+-------+-------+\n");
 
-    for (int i = 0; i < TAM; i++) {
+    for (int i = 0; i < 9; i++) {
 
         printf("  %d  |", i + 1);
 
-        for (int j = 0; j < TAM; j++) {
+        for (int j = 0; j < 9; j++) {
 
             if (tabuleiro[i][j] == 0) {
 
                 cor(PADRAO);
                 printf(" .");
 
-            }
-            else {
+            } else {
 
                 if (fixo[i][j])
                     cor(BRANCO);
@@ -125,7 +307,6 @@ void exibirTabuleiro(void) {
                     cor(VERDE);
 
                 printf(" %d", tabuleiro[i][j]);
-
                 cor(PADRAO);
             }
 
@@ -143,11 +324,9 @@ void exibirTabuleiro(void) {
 
     cor(BRANCO);
 
-    printf("\n  Erros: %d", erros);
-    printf("    Dicas: %d\n", dicas);
+    printf("\n  Erros: %d     Dicas: %d\n", erros, dicas);
 
-    printf("\n");
-    printf("  1 - Inserir numero");
+    printf("\n  1 - Inserir numero");
     printf("    2 - Apagar numero\n");
 
     printf("  3 - Pedir dica");
@@ -164,47 +343,10 @@ void exibirTabuleiro(void) {
 
 int verificarVitoria(void) {
 
-    for (int i = 0; i < TAM; i++) {
-        for (int j = 0; j < TAM; j++) {
+    for (int i = 0; i < 9; i++) {
+        for (int j = 0; j < 9; j++) {
 
             if (tabuleiro[i][j] != solucao[i][j])
-                return 0;
-
-        }
-    }
-
-    return 1;
-}
-
-// =================================
-// MOVIMENTO VALIDO
-// =================================
-
-int movimentoValido(int linha, int coluna, int numero) {
-
-    for (int j = 0; j < TAM; j++) {
-
-        if (j != coluna &&
-            tabuleiro[linha][j] == numero)
-            return 0;
-    }
-
-    for (int i = 0; i < TAM; i++) {
-
-        if (i != linha &&
-            tabuleiro[i][coluna] == numero)
-            return 0;
-    }
-
-    int inicioLinha = (linha / 3) * 3;
-    int inicioColuna = (coluna / 3) * 3;
-
-    for (int i = inicioLinha; i < inicioLinha + 3; i++) {
-
-        for (int j = inicioColuna; j < inicioColuna + 3; j++) {
-
-            if ((i != linha || j != coluna) &&
-                tabuleiro[i][j] == numero)
                 return 0;
         }
     }
@@ -218,9 +360,8 @@ int movimentoValido(int linha, int coluna, int numero) {
 
 void mostrarDica(void) {
 
-    for (int i = 0; i < TAM; i++) {
-
-        for (int j = 0; j < TAM; j++) {
+    for (int i = 0; i < 9; i++) {
+        for (int j = 0; j < 9; j++) {
 
             if (tabuleiro[i][j] == 0) {
 
@@ -235,7 +376,17 @@ void mostrarDica(void) {
 }
 
 // =================================
-// JOGO
+// PAUSAR
+// =================================
+
+void pausar(void) {
+    printf("\n  Pressione ENTER para continuar...");
+    getchar();
+    getchar();
+}
+
+// =================================
+// JOGAR
 // =================================
 
 void jogar(void) {
@@ -246,13 +397,13 @@ void jogar(void) {
 
     limparTela();
 
-    printf("\nESCOLHA A DIFICULDADE\n\n");
+    printf("\n  ESCOLHA A DIFICULDADE\n\n");
 
     printf("  1 - Facil\n");
     printf("  2 - Medio\n");
     printf("  3 - Dificil\n");
 
-    printf("\nOpcao: ");
+    printf("\n  Opcao: ");
 
     if (scanf("%d", &dificuldade) != 1)
         return;
@@ -271,7 +422,7 @@ void jogar(void) {
 
         exibirTabuleiro();
 
-        printf("\nOpcao: ");
+        printf("\n  Opcao: ");
 
         if (scanf("%d", &opcao) != 1)
             break;
@@ -297,16 +448,11 @@ void jogar(void) {
 
                 break;
 
-            }
-            else {
+            } else {
 
                 printf("\n  Sudoku ainda nao foi resolvido.\n");
 
-                printf("\n  Pressione ENTER para continuar.");
-
-                getchar();
-                getchar();
-
+                pausar();
                 continue;
             }
         }
@@ -314,12 +460,12 @@ void jogar(void) {
         if (opcao != 1 && opcao != 2)
             continue;
 
-        printf("\nLinha (1-9): ");
+        printf("\n  Linha (1-9): ");
 
         if (scanf("%d", &linha) != 1)
             break;
 
-        printf("Coluna (1-9): ");
+        printf("  Coluna (1-9): ");
 
         if (scanf("%d", &coluna) != 1)
             break;
@@ -337,11 +483,10 @@ void jogar(void) {
         if (opcao == 2) {
 
             tabuleiro[linha][coluna] = 0;
-
             continue;
         }
 
-        printf("Numero (1-9): ");
+        printf("  Numero (1-9): ");
 
         if (scanf("%d", &numero) != 1)
             break;
@@ -349,14 +494,12 @@ void jogar(void) {
         if (numero < 1 || numero > 9)
             continue;
 
-        if (!movimentoValido(linha, coluna, numero)) {
-
+        if (!movimentoValido(tabuleiro, linha, coluna, numero)) {
             erros++;
             continue;
         }
 
         if (numero != solucao[linha][coluna]) {
-
             erros++;
             continue;
         }
@@ -375,20 +518,18 @@ void jogar(void) {
         }
     }
 
+    long long tempo =
+        (long long)(time(NULL) - inicio);
+
     limparTela();
 
     printf("\n  FIM DE JOGO\n\n");
 
     printf("  Erros: %d\n", erros);
     printf("  Dicas: %d\n", dicas);
+    printf("  Tempo: %lld segundos\n", tempo);
 
-    printf("  Tempo: %lld segundos\n",
-        (long long)(time(NULL) - inicio));
-
-    printf("\n  Pressione ENTER para continuar.");
-
-    getchar();
-    getchar();
+    pausar();
 }
 
 // =================================
@@ -441,16 +582,15 @@ int main(void) {
                 printf("  - Nao pode repetir numeros.\n");
                 printf("  - Casas originais nao podem ser alteradas.\n");
 
-                printf("\n  Pressione ENTER para voltar.");
-
-                getchar();
-                getchar();
+                pausar();
 
                 break;
 
             case 0:
+
                 limparTela();
                 printf("\n  Obrigado por jogar!\n\n");
+
                 break;
 
             default:
