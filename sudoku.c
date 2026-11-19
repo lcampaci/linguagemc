@@ -1,4 +1,3 @@
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -14,7 +13,7 @@
 #define PADRAO 7
 #define CINZA 8
 
-#define ARQUIVO_SAVE "sudoku_save.dat"
+#define PASTA_SAVES "partidas_salvas"
 #define SAVE_MAGIC "SUDOKU01"
 #define SAVE_VERSAO 1
 
@@ -30,6 +29,14 @@ typedef struct {
     long long tempoAcumulado;
 } DadosJogo;
 
+typedef struct {
+    int numero;
+    char caminho[MAX_PATH];
+    DadosJogo dados;
+} PartidaInfo;
+
+char arquivoAtual[MAX_PATH] = "";
+
 int solucao[TAM][TAM];
 int tabuleiro[TAM][TAM];
 int fixo[TAM][TAM];
@@ -42,6 +49,8 @@ long long tempoAcumulado = 0;
 time_t inicioSessao;
 
 HANDLE console;
+
+void jogar(void);
 
 /* =====================================================
    TELA E CORES
@@ -473,46 +482,97 @@ void exibirTabuleiro(void) {
 }
 
 /* =====================================================
-   SALVAR E CARREGAR
+   GERENCIAMENTO DE VARIAS PARTIDAS
    ===================================================== */
 
-int existeJogoSalvo(void) {
-    FILE *arquivo = fopen(ARQUIVO_SAVE, "rb");
+int dadosValidos(const DadosJogo *dados) {
+    if (strcmp(dados->identificacao, SAVE_MAGIC) != 0 ||
+        dados->versao != SAVE_VERSAO ||
+        dados->dificuldade < 1 || dados->dificuldade > 3 ||
+        dados->erros < 0 || dados->dicas < 0 ||
+        dados->tempoAcumulado < 0) return 0;
+
+    for (int i = 0; i < TAM; i++) {
+        for (int j = 0; j < TAM; j++) {
+            if (dados->solucao[i][j] < 1 || dados->solucao[i][j] > 9 ||
+                dados->tabuleiro[i][j] < 0 || dados->tabuleiro[i][j] > 9 ||
+                (dados->fixo[i][j] != 0 && dados->fixo[i][j] != 1))
+                return 0;
+            if (dados->fixo[i][j] &&
+                dados->tabuleiro[i][j] != dados->solucao[i][j]) return 0;
+        }
+    }
+    return 1;
+}
+
+int lerArquivoPartida(const char *caminho, DadosJogo *dados) {
+    FILE *arquivo = fopen(caminho, "rb");
     if (!arquivo) return 0;
-
-    DadosJogo dados;
-    int resultado = fread(&dados, sizeof(DadosJogo), 1, arquivo);
-
+    int resultado = fread(dados, sizeof(DadosJogo), 1, arquivo);
     fclose(arquivo);
+    return resultado == 1 && dadosValidos(dados);
+}
 
-    return resultado == 1 &&
-           strcmp(dados.identificacao, SAVE_MAGIC) == 0 &&
-           dados.versao == SAVE_VERSAO;
+void prepararPastaSalvamentos(void) {
+    CreateDirectoryA(PASTA_SAVES, NULL);
+}
+
+int criarEspacoParaNovaPartida(void) {
+    prepararPastaSalvamentos();
+    for (int numero = 1; numero < 2147483647; numero++) {
+        char caminho[MAX_PATH];
+        sprintf(caminho, PASTA_SAVES "\\partida_%04d.dat", numero);
+        if (GetFileAttributesA(caminho) == INVALID_FILE_ATTRIBUTES) {
+            strcpy(arquivoAtual, caminho);
+            return 1;
+        }
+    }
+    return 0;
+}
+
+void migrarSalvamentoAntigo(void) {
+    prepararPastaSalvamentos();
+
+    if (GetFileAttributesA("sudoku_save.dat") == INVALID_FILE_ATTRIBUTES)
+        return;
+
+    DadosJogo dadosAntigos;
+    if (!lerArquivoPartida("sudoku_save.dat", &dadosAntigos))
+        return;
+
+    char destino[MAX_PATH];
+    sprintf(destino, PASTA_SAVES "\\partida_0001.dat");
+
+    if (GetFileAttributesA(destino) == INVALID_FILE_ATTRIBUTES)
+        CopyFileA("sudoku_save.dat", destino, TRUE);
+
+    /* Guarda o arquivo antigo como backup para nao importar de novo. */
+    MoveFileA("sudoku_save.dat", "sudoku_save.dat.bak");
 }
 
 void salvarJogo(void) {
+    if (arquivoAtual[0] == '\0' && !criarEspacoParaNovaPartida()) {
+        printf("\nNao foi possivel reservar um arquivo para a partida.\n");
+        return;
+    }
+
     DadosJogo dados;
     memset(&dados, 0, sizeof(dados));
-
     strcpy(dados.identificacao, SAVE_MAGIC);
     dados.versao = SAVE_VERSAO;
-
     memcpy(dados.solucao, solucao, sizeof(solucao));
     memcpy(dados.tabuleiro, tabuleiro, sizeof(tabuleiro));
     memcpy(dados.fixo, fixo, sizeof(fixo));
-
     dados.erros = erros;
     dados.dicas = dicas;
     dados.dificuldade = dificuldade;
     dados.tempoAcumulado = obterTempoAtual();
 
-    FILE *arquivo = fopen(ARQUIVO_SAVE, "wb");
-
+    FILE *arquivo = fopen(arquivoAtual, "wb");
     if (!arquivo) {
         printf("\nNao foi possivel salvar a partida.\n");
         return;
     }
-
     int resultado = fwrite(&dados, sizeof(DadosJogo), 1, arquivo);
     fclose(arquivo);
 
@@ -525,61 +585,164 @@ void salvarJogo(void) {
     }
 }
 
-int carregarJogo(void) {
-    FILE *arquivo = fopen(ARQUIVO_SAVE, "rb");
-    if (!arquivo) return 0;
-
+int carregarJogo(const char *caminho) {
     DadosJogo dados;
-
-    if (fread(&dados, sizeof(DadosJogo), 1, arquivo) != 1) {
-        fclose(arquivo);
-        return 0;
-    }
-
-    fclose(arquivo);
-
-    if (strcmp(dados.identificacao, SAVE_MAGIC) != 0 ||
-        dados.versao != SAVE_VERSAO ||
-        dados.dificuldade < 1 || dados.dificuldade > 3 ||
-        dados.erros < 0 || dados.dicas < 0 ||
-        dados.tempoAcumulado < 0) {
-        return 0;
-    }
-
-    for (int i = 0; i < TAM; i++) {
-        for (int j = 0; j < TAM; j++) {
-            if (dados.solucao[i][j] < 1 ||
-                dados.solucao[i][j] > 9 ||
-                dados.tabuleiro[i][j] < 0 ||
-                dados.tabuleiro[i][j] > 9 ||
-                (dados.fixo[i][j] != 0 &&
-                 dados.fixo[i][j] != 1)) {
-                return 0;
-            }
-
-            if (dados.fixo[i][j] &&
-                dados.tabuleiro[i][j] != dados.solucao[i][j]) {
-                return 0;
-            }
-        }
-    }
+    if (!lerArquivoPartida(caminho, &dados)) return 0;
 
     memcpy(solucao, dados.solucao, sizeof(solucao));
     memcpy(tabuleiro, dados.tabuleiro, sizeof(tabuleiro));
     memcpy(fixo, dados.fixo, sizeof(fixo));
-
     erros = dados.erros;
     dicas = dados.dicas;
     dificuldade = dados.dificuldade;
-
     tempoAcumulado = dados.tempoAcumulado;
     inicioSessao = time(NULL);
 
+    strncpy(arquivoAtual, caminho, MAX_PATH - 1);
+    arquivoAtual[MAX_PATH - 1] = '\0';
     return 1;
 }
 
 void excluirJogoSalvo(void) {
-    remove(ARQUIVO_SAVE);
+    if (arquivoAtual[0] != '\0') {
+        DeleteFileA(arquivoAtual);
+        arquivoAtual[0] = '\0';
+    }
+}
+
+int compararPartidas(const void *a, const void *b) {
+    const PartidaInfo *pa = (const PartidaInfo *)a;
+    const PartidaInfo *pb = (const PartidaInfo *)b;
+    return pa->numero - pb->numero;
+}
+
+PartidaInfo *obterListaPartidas(int *quantidade) {
+    WIN32_FIND_DATAA dadosArquivo;
+    HANDLE busca;
+    PartidaInfo *lista = NULL;
+    int total = 0;
+    *quantidade = 0;
+    prepararPastaSalvamentos();
+
+    busca = FindFirstFileA(PASTA_SAVES "\\partida_*.dat", &dadosArquivo);
+    if (busca == INVALID_HANDLE_VALUE) return NULL;
+
+    do {
+        int numero;
+        if (sscanf(dadosArquivo.cFileName, "partida_%d.dat", &numero) != 1)
+            continue;
+
+        char caminho[MAX_PATH];
+        sprintf(caminho, PASTA_SAVES "\\%s", dadosArquivo.cFileName);
+        DadosJogo dados;
+        if (!lerArquivoPartida(caminho, &dados)) continue;
+
+        PartidaInfo *novaLista = (PartidaInfo *)realloc(
+            lista, (total + 1) * sizeof(PartidaInfo));
+        if (!novaLista) {
+            free(lista);
+            FindClose(busca);
+            return NULL;
+        }
+        lista = novaLista;
+        lista[total].numero = numero;
+        strcpy(lista[total].caminho, caminho);
+        lista[total].dados = dados;
+        total++;
+    } while (FindNextFileA(busca, &dadosArquivo));
+
+    FindClose(busca);
+    if (total > 1)
+        qsort(lista, total, sizeof(PartidaInfo), compararPartidas);
+    *quantidade = total;
+    return lista;
+}
+
+void mostrarResumoPartida(const PartidaInfo *partida, int indice) {
+    char tempo[20];
+    formatarTempo(partida->dados.tempoAcumulado, tempo);
+    printf("\n  %d - Partida %04d\n", indice, partida->numero);
+    printf("      Dificuldade: ");
+    switch (partida->dados.dificuldade) {
+        case 1: printf("Facil"); break;
+        case 2: printf("Medio"); break;
+        case 3: printf("Dificil"); break;
+    }
+    printf(" | Tempo: %s\n", tempo);
+    printf("      Erros: %d | Dicas: %d\n",
+           partida->dados.erros, partida->dados.dicas);
+}
+
+void gerenciarPartidas(void) {
+    while (1) {
+        limparTela();
+        cor(BRANCO);
+        printf("\n          MINHAS PARTIDAS SALVAS\n");
+        printf("          ======================\n");
+
+        int quantidade = 0;
+        PartidaInfo *lista = obterListaPartidas(&quantidade);
+        if (quantidade == 0) {
+            printf("\n  Nenhuma partida salva encontrada.\n");
+            free(lista);
+            pausar();
+            return;
+        }
+
+        printf("\n  Partidas disponiveis: %d\n", quantidade);
+        for (int i = 0; i < quantidade; i++)
+            mostrarResumoPartida(&lista[i], i + 1);
+
+        printf("\n  0 - Voltar ao menu principal\n\n");
+        int escolha = lerInteiro("Escolha a partida: ");
+        if (escolha == 0) {
+            free(lista);
+            return;
+        }
+        if (escolha < 1 || escolha > quantidade) {
+            printf("\nOpcao invalida.\n");
+            free(lista);
+            Sleep(900);
+            continue;
+        }
+
+        int indice = escolha - 1;
+        printf("\n  Partida %04d selecionada.\n", lista[indice].numero);
+        printf("  1 - Continuar esta partida\n");
+        printf("  2 - Excluir esta partida\n");
+        printf("  0 - Voltar\n");
+        int acao = lerInteiro("\nEscolha uma opcao: ");
+
+        if (acao == 1) {
+            char caminho[MAX_PATH];
+            strcpy(caminho, lista[indice].caminho);
+            free(lista);
+            if (carregarJogo(caminho)) {
+                printf("\nPartida carregada com sucesso!\n");
+                Sleep(700);
+                jogar();
+                return;
+            }
+            printf("\nNao foi possivel carregar esta partida.\n");
+            Sleep(1200);
+        } else if (acao == 2) {
+            char caminho[MAX_PATH];
+            strcpy(caminho, lista[indice].caminho);
+            free(lista);
+            printf("\nTem certeza que deseja excluir esta partida?\n");
+            printf("1 - Sim, excluir\n");
+            printf("0 - Nao\n");
+            if (lerInteiro("Opcao: ") == 1) {
+                if (DeleteFileA(caminho))
+                    printf("\nPartida excluida.\n");
+                else
+                    printf("\nNao foi possivel excluir a partida.\n");
+                Sleep(900);
+            }
+        } else {
+            free(lista);
+        }
+    }
 }
 
 /* =====================================================
@@ -845,6 +1008,7 @@ void mostrarRegras(void) {
 int main(void) {
     console = GetStdHandle(STD_OUTPUT_HANDLE);
     srand((unsigned int)time(NULL));
+    migrarSalvamentoAntigo();
 
     int opcao;
 
@@ -858,13 +1022,7 @@ int main(void) {
         printf("          =====================\n\n");
 
         printf("  1 - Novo jogo\n");
-
-        if (existeJogoSalvo()) {
-            printf("  2 - Continuar partida salva\n");
-        } else {
-            printf("  2 - Continuar partida salva (indisponivel)\n");
-        }
-
+        printf("  2 - Minhas partidas salvas\n");
         printf("  3 - Regras do jogo\n");
         printf("  0 - Sair\n\n");
 
@@ -872,17 +1030,6 @@ int main(void) {
 
         switch (opcao) {
             case 1: {
-                if (existeJogoSalvo()) {
-                    printf("\nJa existe uma partida salva.\n");
-                    printf("Deseja iniciar outro jogo e substituir o salvamento?\n");
-                    printf("1 - Sim\n");
-                    printf("0 - Nao\n");
-
-                    int confirmar = lerInteiro("Opcao: ");
-
-                    if (confirmar != 1) break;
-                }
-
                 limparTela();
 
                 printf("\nEscolha a dificuldade:\n\n");
@@ -896,6 +1043,12 @@ int main(void) {
                     dificuldade = 1;
                 }
 
+                if (!criarEspacoParaNovaPartida()) {
+                    printf("\nNao foi possivel criar um novo salvamento.\n");
+                    Sleep(1200);
+                    break;
+                }
+
                 printf("\nGerando um novo Sudoku...\n");
                 printf("Aguarde um momento.\n");
 
@@ -906,15 +1059,7 @@ int main(void) {
             }
 
             case 2:
-                if (carregarJogo()) {
-                    printf("\nPartida carregada com sucesso!\n");
-                    Sleep(800);
-                    jogar();
-                } else {
-                    printf("\nNao foi possivel carregar a partida.\n");
-                    printf("O arquivo pode estar ausente ou danificado.\n");
-                    Sleep(1800);
-                }
+                gerenciarPartidas();
                 break;
 
             case 3:
